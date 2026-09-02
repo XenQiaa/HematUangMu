@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 4: Tested 3 new features — Budgets, Recurring, Wrapped. Backend pytest: 19/19 passed (6 budget, 5 recurring, 3 wrapped, 5 regression). Frontend Playwright: register→dashboard OK; wrapped-cta-card visible on Dashboard; /budgets page creates budget via select+input+save-btn, list row appears with data-testid budget-row-<cat>, delete works. /recurring page opens dialog via new-recurring-btn, saves via rec-save-btn with rec-amount/rec-day/rec-category/rec-description, row appears, toggle switch works. Wrapped page (empty) shows friendly empty state; wrapped page (populated) shows all 6 slides intro/balance/cats/biggest/habit/story, wrap-next-btn cycles through, wrap-share-btn clickable, wrap-close-btn returns to /dashboard. Nav-budgets-link and nav-recurring-link route correctly. Budget alert idempotency at 80/100/120% verified in DB. Lazy recurring materialization verified: rule with past next_run='2026-01-01' created transactions and rolled forward next_run past today on GET /api/recurring.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_budgets_recurring_wrapped.py",
+    "/app/test_reports/pytest/iter4_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py::run_due_recurring while-loop is correct but back-to-back materializations of very old rules could insert many rows (e.g., a rule with next_run=2020-01-01 would create ~72 tx). Consider capping to a max of N months or skipping to current month for safety.",
+    "check_budget_alert stores idempotency key <cat>|<ym>|<level>, but percentage buckets are strict thresholds (80/100/120). If spend jumps from 60% directly to 130% in one tx, only the 120% alert row is inserted — 80% and 100% are skipped. This is likely intentional (highest-level supersedes), but worth documenting.",
+    "budget_alert check runs after every expense insert including bulk from run_due_recurring; on a fresh month with N due materializations this could send N Telegram messages if levels cross sequentially. Idempotency key prevents duplicates per level, so behavior is acceptable.",
+    "Wrapped LLM story is truncated to 200 chars but story['top_categories'] serialization uses tuples that repr as ('Belanja', 500000) in the prompt; consider dict/named for cleaner prompts. Functional impact: none.",
+    "Recurring PUT endpoint always recomputes next_run from _next_run(day) — if user only toggles active, the next_run gets pushed forward by 1 month when current day >= day_of_month. UI toggle uses PUT with full payload so this is triggered on every toggle; recommend server preserve existing next_run when day_of_month unchanged."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_budgets_recurring_wrapped.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Ephemeral per-run gmail users tst_i4_<uuid8>@gmail.com / TestPass123 (cleaned up in module teardown); UI test users tst_i4ui_<uuid8> and wr_<uuid8> also cleaned.",
+  "seed_data_creation": "Direct Mongo inserts: (a) recurring rule with past next_run='2026-01-01' for lazy materialization test; (b) 4 transactions in 2025-06 for populated wrapped test (250k+500k+50k expense + 3M income); (c) 2 transactions for UI wrapped populated test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression suites: /app/backend/tests/test_auth_hematuangmu.py (iter2), test_forgot_password.py (iter3), test_budgets_recurring_wrapped.py (iter4). Register endpoint requires @gmail.com or similar valid email domain. For wrapped populated tests, seed transactions directly in Mongo with date in target YYYY-MM. Recurring UI toggle currently calls PUT with day_of_month unchanged, which will reset next_run — see code review note.",
+  "rca of the issue": "N/A — all three features implemented and verified end-to-end."
+}

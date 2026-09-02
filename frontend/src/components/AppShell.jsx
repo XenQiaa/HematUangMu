@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
-import { LayoutDashboard, ListOrdered, Send, LogOut, Wallet } from "lucide-react";
+import { LayoutDashboard, ListOrdered, Send, LogOut, Wallet, Target, Repeat } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
@@ -28,6 +28,12 @@ export default function AppShell() {
           </NavLink>
           <NavLink data-testid="nav-transactions-link" to="/transactions" className={link}>
             <ListOrdered className="w-4 h-4" /> Transaksi
+          </NavLink>
+          <NavLink data-testid="nav-budgets-link" to="/budgets" className={link}>
+            <Target className="w-4 h-4" /> Budget
+          </NavLink>
+          <NavLink data-testid="nav-recurring-link" to="/recurring" className={link}>
+            <Repeat className="w-4 h-4" /> Berulang
           </NavLink>
           <NavLink data-testid="nav-telegram-link" to="/telegram" className={link}>
             <Send className="w-4 h-4" /> Telegram Bot
@@ -75,6 +81,9 @@ export default function AppShell() {
           </NavLink>
           <NavLink to="/transactions" className={({isActive}) => `flex flex-col items-center gap-0.5 py-1 px-3 rounded-lg ${isActive ? "text-ochre" : "text-stone-500"}`}>
             <ListOrdered className="w-5 h-5"/><span className="text-[10px] font-medium">Transaksi</span>
+          </NavLink>
+          <NavLink to="/budgets" className={({isActive}) => `flex flex-col items-center gap-0.5 py-1 px-3 rounded-lg ${isActive ? "text-ochre" : "text-stone-500"}`}>
+            <Target className="w-5 h-5"/><span className="text-[10px] font-medium">Budget</span>
           </NavLink>
           <NavLink to="/telegram" className={({isActive}) => `flex flex-col items-center gap-0.5 py-1 px-3 rounded-lg ${isActive ? "text-ochre" : "text-stone-500"}`}>
             <Send className="w-5 h-5"/><span className="text-[10px] font-medium">Telegram</span>

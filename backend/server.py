@@ -480,6 +480,9 @@ async def create_transaction(payload: TransactionCreate, request: Request):
         "created_at": now.isoformat(),
     }
     await db.transactions.insert_one(doc)
+    if doc["type"] == "expense":
+        try: await check_budget_alert(user.user_id, doc["category"])
+        except Exception: pass
     return {k: v for k, v in doc.items() if k != "_id"}
 
 @api.put("/transactions/{tx_id}")
@@ -648,6 +651,9 @@ async def parse_text(payload: ParseTextIn, request: Request):
         "created_at": now.isoformat(),
     }
     await db.transactions.insert_one(doc)
+    if doc["type"] == "expense":
+        try: await check_budget_alert(user.user_id, doc["category"])
+        except Exception: pass
     return {k: v for k, v in doc.items() if k != "_id"}
 
 @api.post("/parse/image")
@@ -722,6 +728,52 @@ async def find_user_by_chat(chat_id: int) -> Optional[str]:
     link = await db.telegram_links.find_one({"chat_id": chat_id}, {"_id": 0})
     return link["user_id"] if link else None
 
+
+async def _month_expense(user_id: str, category: str, ym: str) -> int:
+    rows = await db.transactions.find(
+        {"user_id": user_id, "type": "expense", "category": category, "date": {"$regex": f"^{ym}"}},
+        {"_id": 0, "amount": 1},
+    ).to_list(5000)
+    return sum(r["amount"] for r in rows)
+
+
+async def check_budget_alert(user_id: str, category: str):
+    """After a new expense, check if budget crossed 80/100/120% thresholds; alert via Telegram once per level per month."""
+    budget = await db.budgets.find_one({"user_id": user_id, "category": category}, {"_id": 0})
+    if not budget:
+        return
+    limit = int(budget.get("monthly_limit", 0))
+    if limit <= 0:
+        return
+    ym = datetime.now(timezone.utc).date().isoformat()[:7]
+    spent = await _month_expense(user_id, category, ym)
+    pct = int(spent * 100 / limit)
+    level = None
+    if pct >= 120:
+        level = 120
+    elif pct >= 100:
+        level = 100
+    elif pct >= 80:
+        level = 80
+    if not level:
+        return
+    key = f"{category}|{ym}|{level}"
+    already = await db.budget_alerts.find_one({"user_id": user_id, "key": key})
+    if already:
+        return
+    await db.budget_alerts.insert_one({"user_id": user_id, "key": key, "sent_at": datetime.now(timezone.utc).isoformat()})
+    link = await db.telegram_links.find_one({"user_id": user_id, "chat_id": {"$exists": True}}, {"_id": 0})
+    if link and link.get("chat_id"):
+        emoji = "🚨" if level >= 100 else "⚠️"
+        msg = (f"{emoji} <b>Budget {category}</b>\n"
+               f"Terpakai: <b>{rupiah(spent)}</b> dari {rupiah(limit)} ({pct}%)\n"
+               + ("Sudah lewat batas!" if level >= 100 else "Hampir habis, hati-hati ya."))
+        try:
+            await tg_send(link["chat_id"], msg)
+        except Exception:
+            pass
+
+
 async def save_ai_transaction(user_id: str, data: dict, source: str) -> dict:
     now = datetime.now(timezone.utc)
     doc = {
@@ -734,6 +786,9 @@ async def save_ai_transaction(user_id: str, data: dict, source: str) -> dict:
         "source": source, "created_at": now.isoformat(),
     }
     await db.transactions.insert_one(doc)
+    if doc["type"] == "expense":
+        try: await check_budget_alert(user_id, doc["category"])
+        except Exception: pass
     return doc
 
 @api.post("/telegram/webhook/{secret}")
@@ -805,6 +860,229 @@ async def tg_webhook(secret: str, request: Request):
         logger.exception("telegram handler error")
         await tg_send(chat_id, f"⚠️ Gagal memproses: {str(e)[:100]}")
     return {"ok": True}
+
+# ---------------- Budgets ----------------
+class BudgetIn(BaseModel):
+    category: str
+    monthly_limit: int = Field(ge=0)
+
+@api.get("/budgets")
+async def list_budgets(request: Request):
+    user = await get_current_user(request)
+    rows = await db.budgets.find({"user_id": user.user_id}, {"_id": 0}).to_list(200)
+    ym = datetime.now(timezone.utc).date().isoformat()[:7]
+    for r in rows:
+        r["spent"] = await _month_expense(user.user_id, r["category"], ym)
+        r["percent"] = int(r["spent"] * 100 / r["monthly_limit"]) if r["monthly_limit"] > 0 else 0
+    return rows
+
+@api.post("/budgets")
+async def upsert_budget(payload: BudgetIn, request: Request):
+    user = await get_current_user(request)
+    now = datetime.now(timezone.utc).isoformat()
+    await db.budgets.update_one(
+        {"user_id": user.user_id, "category": payload.category},
+        {"$set": {"user_id": user.user_id, "category": payload.category,
+                  "monthly_limit": int(payload.monthly_limit), "updated_at": now},
+         "$setOnInsert": {"id": str(uuid.uuid4()), "created_at": now}},
+        upsert=True,
+    )
+    doc = await db.budgets.find_one({"user_id": user.user_id, "category": payload.category}, {"_id": 0})
+    return doc
+
+@api.delete("/budgets/{category}")
+async def delete_budget(category: str, request: Request):
+    user = await get_current_user(request)
+    await db.budgets.delete_one({"user_id": user.user_id, "category": category})
+    return {"ok": True}
+
+
+# ---------------- Recurring ----------------
+class RecurringIn(BaseModel):
+    type: str
+    amount: int = Field(gt=0)
+    category: str
+    description: Optional[str] = ""
+    day_of_month: int = Field(ge=1, le=28)  # cap at 28 so it always runs
+    active: bool = True
+
+def _next_run(day_of_month: int, from_date: Optional[datetime] = None) -> str:
+    d = (from_date or datetime.now(timezone.utc)).date()
+    year, month = d.year, d.month
+    if d.day >= day_of_month:
+        month += 1
+        if month > 12:
+            month = 1; year += 1
+    from datetime import date as _date
+    return _date(year, month, day_of_month).isoformat()
+
+async def run_due_recurring(user_id: str) -> int:
+    """Materialize any due recurring rules into transactions. Returns count created."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    rules = await db.recurring.find({"user_id": user_id, "active": True, "next_run": {"$lte": today}}, {"_id": 0}).to_list(200)
+    created = 0
+    MAX_PER_RULE = 12  # safety cap: never materialize more than 12 months at once
+    for r in rules:
+        iters = 0
+        while r.get("next_run", today) <= today and iters < MAX_PER_RULE:
+            iters += 1
+            now = datetime.now(timezone.utc)
+            tx = {
+                "id": str(uuid.uuid4()), "user_id": user_id,
+                "type": r["type"], "amount": int(r["amount"]),
+                "category": r["category"], "description": r.get("description") or f"[Berulang] {r['category']}",
+                "date": r["next_run"], "source": "recurring",
+                "created_at": now.isoformat(), "recurring_id": r.get("id"),
+            }
+            await db.transactions.insert_one(tx)
+            created += 1
+            r["next_run"] = _next_run(int(r["day_of_month"]), datetime.fromisoformat(r["next_run"] + "T00:00:00+00:00"))
+            if r["type"] == "expense":
+                try: await check_budget_alert(user_id, r["category"])
+                except Exception: pass
+        await db.recurring.update_one({"id": r["id"]}, {"$set": {"next_run": r["next_run"], "last_run": today}})
+    return created
+
+@api.get("/recurring")
+async def list_recurring(request: Request):
+    user = await get_current_user(request)
+    # opportunistically materialize due rules
+    await run_due_recurring(user.user_id)
+    rows = await db.recurring.find({"user_id": user.user_id}, {"_id": 0}).sort("day_of_month", 1).to_list(200)
+    return rows
+
+@api.post("/recurring")
+async def create_recurring(payload: RecurringIn, request: Request):
+    user = await get_current_user(request)
+    if payload.type not in ("expense", "income"):
+        raise HTTPException(400, "type must be expense or income")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()), "user_id": user.user_id,
+        "type": payload.type, "amount": int(payload.amount),
+        "category": payload.category, "description": payload.description or "",
+        "day_of_month": int(payload.day_of_month), "active": payload.active,
+        "next_run": _next_run(int(payload.day_of_month)),
+        "last_run": None, "created_at": now.isoformat(),
+    }
+    await db.recurring.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+@api.put("/recurring/{rid}")
+async def update_recurring(rid: str, payload: RecurringIn, request: Request):
+    user = await get_current_user(request)
+    existing = await db.recurring.find_one({"id": rid, "user_id": user.user_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Not found")
+    upd = {"type": payload.type, "amount": int(payload.amount), "category": payload.category,
+           "description": payload.description or "", "day_of_month": int(payload.day_of_month),
+           "active": payload.active}
+    # Only recompute next_run if the day changed; toggling active must NOT reset next_run
+    if int(payload.day_of_month) != int(existing.get("day_of_month", 0)):
+        upd["next_run"] = _next_run(int(payload.day_of_month))
+    await db.recurring.update_one({"id": rid, "user_id": user.user_id}, {"$set": upd})
+    return await db.recurring.find_one({"id": rid}, {"_id": 0})
+
+@api.delete("/recurring/{rid}")
+async def delete_recurring(rid: str, request: Request):
+    user = await get_current_user(request)
+    res = await db.recurring.delete_one({"id": rid, "user_id": user.user_id})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+# ---------------- Wrapped (Monthly Story) ----------------
+@api.get("/wrapped")
+async def wrapped(request: Request, year: int, month: int):
+    user = await get_current_user(request)
+    if month < 1 or month > 12:
+        raise HTTPException(400, "invalid month")
+    ym = f"{year:04d}-{month:02d}"
+    rows = await db.transactions.find(
+        {"user_id": user.user_id, "date": {"$regex": f"^{ym}"}},
+        {"_id": 0},
+    ).to_list(5000)
+    income = sum(r["amount"] for r in rows if r["type"] == "income")
+    expense = sum(r["amount"] for r in rows if r["type"] == "expense")
+    # By category (expense only)
+    by_cat = {}
+    for r in rows:
+        if r["type"] == "expense":
+            by_cat[r["category"]] = by_cat.get(r["category"], 0) + r["amount"]
+    top_cats = sorted(by_cat.items(), key=lambda x: -x[1])[:3]
+    # Biggest single tx
+    biggest = None
+    if rows:
+        exp = [r for r in rows if r["type"] == "expense"]
+        if exp:
+            biggest = max(exp, key=lambda r: r["amount"])
+    # Sources
+    src_count = {}
+    for r in rows:
+        src_count[r.get("source", "manual")] = src_count.get(r.get("source", "manual"), 0) + 1
+    telegram_count = sum(v for k, v in src_count.items() if k.startswith("telegram"))
+    # Active days
+    days = set(r["date"] for r in rows)
+    # Weekday spending
+    from datetime import date as _d
+    wd_totals = [0] * 7
+    for r in rows:
+        if r["type"] == "expense":
+            try:
+                dt = _d.fromisoformat(r["date"])
+                wd_totals[dt.weekday()] += r["amount"]
+            except Exception:
+                pass
+    wd_names = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
+    peak_day = None
+    if any(wd_totals):
+        i = wd_totals.index(max(wd_totals))
+        peak_day = {"name": wd_names[i], "amount": wd_totals[i]}
+    # Frequent merchants (from description)
+    from collections import Counter
+    words = Counter()
+    for r in rows:
+        if r["type"] == "expense":
+            for w in re.findall(r"[A-Za-zÀ-ÿ]{4,}", (r.get("description") or "")):
+                words[w.lower()] += 1
+    top_words = [w for w, _ in words.most_common(3)]
+
+    # Fun one-liner via LLM (best-effort)
+    story = None
+    if top_cats and EMERGENT_LLM_KEY:
+        try:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage
+            chat = LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=f"wrapped-{user.user_id}-{ym}",
+                system_message=(
+                    "Kamu adalah copywriter Indonesia yang lucu & positif untuk aplikasi keuangan. "
+                    "Buat SATU kalimat pendek (max 20 kata) dalam Bahasa Indonesia yang mengomentari kebiasaan pengguna "
+                    "berdasarkan data. Nada: hangat, playful, tidak menghakimi. Sertakan emoji secukupnya. "
+                    "JANGAN gunakan tanda kutip, backtick, atau markdown. Cukup satu kalimat mentah."
+                ),
+            ).with_model("gemini", "gemini-3-flash-preview")
+            prompt = (f"Bulan {ym}. Pemasukan Rp{income}, pengeluaran Rp{expense}. "
+                      f"Top 3 kategori: {top_cats}. Hari paling boros: {peak_day}. "
+                      f"Aktif {len(days)} hari. {telegram_count} transaksi via Telegram.")
+            resp = await chat.send_message(UserMessage(text=prompt))
+            story = str(resp).strip().strip('"').strip()[:200]
+        except Exception as e:
+            logger.warning(f"wrapped story LLM err: {e}")
+
+    return {
+        "year": year, "month": month, "ym": ym,
+        "income": income, "expense": expense, "balance": income - expense,
+        "tx_count": len(rows), "active_days": len(days),
+        "top_categories": [{"category": c, "amount": a} for c, a in top_cats],
+        "biggest_expense": biggest,
+        "telegram_count": telegram_count,
+        "peak_day": peak_day,
+        "top_keywords": top_words,
+        "story": story,
+    }
+
 
 # ---------------- Register ----------------
 app.include_router(api)

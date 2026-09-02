@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, Area, AreaChart } from "recharts";
-import { TrendingUp, TrendingDown, Wallet, Sparkles, Plus, Send, Camera, Loader2 } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, Sparkles, Plus, Send, Camera, Loader2, Trophy } from "lucide-react";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 import TransactionDialog from "@/components/TransactionDialog";
 
 const COLORS = ["#D97706", "#E06D53", "#10B981", "#3B82F6", "#EC4899", "#8B5CF6", "#F97316", "#14B8A6"];
@@ -27,6 +28,10 @@ export default function Dashboard() {
   const [openDialog, setOpenDialog] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const fileRef = useRef(null);
+  const nav = useNavigate();
+  const now = new Date();
+  const wrapYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+  const wrapMonth = now.getMonth() === 0 ? 12 : now.getMonth(); // last completed month
 
   const load = useCallback(async () => {
     const start = daysAgo(range.days);
@@ -198,6 +203,22 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      <Card onClick={() => nav(`/wrapped/${wrapYear}/${wrapMonth}`)} data-testid="wrapped-cta-card" className="rounded-2xl warm-border overflow-hidden bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 text-white cursor-pointer hover:scale-[1.01] transition-transform">
+        <CardContent className="p-6 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center">
+              <Trophy className="w-6 h-6"/>
+            </div>
+            <div>
+              <div className="text-xs uppercase tracking-widest text-white/70 font-semibold">Wrapped</div>
+              <div className="text-xl font-black">Cerita uangmu di {new Date(wrapYear, wrapMonth-1).toLocaleDateString("id-ID", { month: "long", year: "numeric" })}</div>
+              <div className="text-sm text-white/80 mt-0.5">Ketuk untuk lihat rangkuman visual + share ke teman</div>
+            </div>
+          </div>
+          <Sparkles className="w-5 h-5 opacity-80 shrink-0"/>
+        </CardContent>
+      </Card>
 
       <TransactionDialog open={openDialog} onOpenChange={setOpenDialog} onSaved={bump}/>
     </div>
