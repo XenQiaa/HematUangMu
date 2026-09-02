@@ -23,6 +23,7 @@ JWT_SECRET = os.environ.get('JWT_SECRET', 'change_me')
 JWT_ALG = "HS256"
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
+FRONTEND_URL = os.environ.get('FRONTEND_URL', '')
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
 
@@ -708,14 +709,45 @@ async def tg_unlink(request: Request):
     await db.telegram_links.delete_one({"user_id": user.user_id})
     return {"ok": True}
 
-async def tg_send(chat_id: int, text: str):
+async def tg_send(chat_id: int, text: str, reply_markup: Optional[dict] = None):
     if not TELEGRAM_BOT_TOKEN:
         return
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     async with httpx.AsyncClient(timeout=10) as hc:
         await hc.post(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            json=payload,
         )
+
+async def tg_answer_callback(callback_id: str, text: str = ""):
+    if not TELEGRAM_BOT_TOKEN:
+        return
+    async with httpx.AsyncClient(timeout=8) as hc:
+        await hc.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery",
+            json={"callback_query_id": callback_id, "text": text[:190]},
+        )
+
+def _menu_keyboard(is_linked: bool) -> dict:
+    row1 = []
+    if FRONTEND_URL:
+        row1.append({"text": "🌐 Buka Website", "url": f"{FRONTEND_URL}/dashboard"})
+    row1.append({"text": "🧠 Tanya AI Coach", "callback_data": "coach_hint"})
+    row2 = [
+        {"text": "📊 Rekap Bulan Ini", "callback_data": "rekap"},
+        {"text": "📝 Cara Catat", "callback_data": "howto"},
+    ]
+    row3 = [
+        {"text": "🎯 Budget", "callback_data": "budget_info"},
+        {"text": "🔁 Tagihan Berulang", "callback_data": "recurring_info"},
+    ]
+    row4 = [
+        {"text": ("🔓 Putuskan Akun" if is_linked else "🔗 Cara Hubungkan"), "callback_data": ("unlink" if is_linked else "link_help")},
+        {"text": "❓ Bantuan", "callback_data": "help"},
+    ]
+    return {"inline_keyboard": [row1, row2, row3, row4]}
 
 async def tg_download_file(file_id: str) -> bytes:
     async with httpx.AsyncClient(timeout=30) as hc:
@@ -791,27 +823,133 @@ async def save_ai_transaction(user_id: str, data: dict, source: str) -> dict:
         except Exception: pass
     return doc
 
+async def _monthly_recap_text(user_id: str) -> str:
+    end = datetime.now(timezone.utc).date()
+    ym = end.isoformat()[:7]
+    rows = await db.transactions.find({"user_id": user_id, "date": {"$regex": f"^{ym}"}}, {"_id": 0}).to_list(5000)
+    if not rows:
+        return f"📊 <b>Rekap {ym}</b>\nBelum ada transaksi bulan ini. Yuk mulai catat!"
+    inc = sum(r["amount"] for r in rows if r["type"] == "income")
+    exp = sum(r["amount"] for r in rows if r["type"] == "expense")
+    cats = {}
+    for r in rows:
+        if r["type"] == "expense":
+            cats[r["category"]] = cats.get(r["category"], 0) + r["amount"]
+    top = sorted(cats.items(), key=lambda x: -x[1])[:3]
+    lines = [
+        f"📊 <b>Rekap {ym}</b>",
+        f"💰 Pemasukan: <b>{rupiah(inc)}</b>",
+        f"💸 Pengeluaran: <b>{rupiah(exp)}</b>",
+        f"🏦 Saldo: <b>{rupiah(inc - exp)}</b>",
+        f"🧾 {len(rows)} transaksi tercatat",
+    ]
+    if top:
+        lines.append("\n<b>Top Kategori</b>:")
+        for i, (c, a) in enumerate(top, 1):
+            lines.append(f"{i}. {c} — {rupiah(a)}")
+    return "\n".join(lines)
+
+
 @api.post("/telegram/webhook/{secret}")
 async def tg_webhook(secret: str, request: Request):
     if secret != TELEGRAM_WEBHOOK_SECRET:
         raise HTTPException(403, "forbidden")
     update = await request.json()
+
+    # -------- Callback query (inline button taps) --------
+    cq = update.get("callback_query")
+    if cq:
+        chat_id = cq["message"]["chat"]["id"]
+        cb_id = cq["id"]
+        action = cq.get("data", "")
+        user_id = await find_user_by_chat(chat_id)
+        try:
+            if action == "coach_hint":
+                await tg_answer_callback(cb_id, "Yuk tanya AI Coach")
+                await tg_send(chat_id, "🧠 <b>Tanya AI Coach</b>\nCukup kirim pertanyaan seperti:\n• <i>Kenapa aku boros bulan ini?</i>\n• <i>Kasih 3 tips hemat</i>\n• <i>Rangkum keuanganku</i>\n\nAtau ketik: <code>/coach ...</code>")
+            elif action == "howto":
+                await tg_answer_callback(cb_id, "Cara catat")
+                await tg_send(chat_id, "📝 <b>Cara Catat Transaksi</b>\n1. Kirim teks: <code>jajan 15k</code>, <code>bensin pertamax 50rb</code>, <code>gaji april 8jt</code>\n2. Kirim <b>foto struk</b> — AI baca total & simpan\n3. Kirim <b>voice note</b> — transkrip + catat otomatis\n\nAI mengerti k/rb/ribu/jt/juta.")
+            elif action == "rekap":
+                if not user_id:
+                    await tg_answer_callback(cb_id, "Belum terhubung")
+                    await tg_send(chat_id, "Akun belum terhubung. Kirim kode 6-digit dari dashboard.")
+                else:
+                    await tg_answer_callback(cb_id, "Menghitung…")
+                    txt = await _monthly_recap_text(user_id)
+                    await tg_send(chat_id, txt)
+            elif action == "budget_info":
+                await tg_answer_callback(cb_id, "Info budget")
+                url = f"{FRONTEND_URL}/budgets" if FRONTEND_URL else ""
+                extra = f"\n\n👉 Buka: {url}" if url else ""
+                await tg_send(chat_id, f"🎯 <b>Budget Bulanan</b>\nTetapkan limit per kategori di website. Aku akan otomatis mengingatkan lewat chat ini saat pengeluaranmu mencapai 80% / 100% / 120% dari batas.{extra}")
+            elif action == "recurring_info":
+                await tg_answer_callback(cb_id, "Info tagihan berulang")
+                url = f"{FRONTEND_URL}/recurring" if FRONTEND_URL else ""
+                extra = f"\n\n👉 Buka: {url}" if url else ""
+                await tg_send(chat_id, f"🔁 <b>Tagihan Berulang</b>\nSet Netflix, kos, cicilan sekali, otomatis tercatat tiap bulan. Atur di website.{extra}")
+            elif action == "link_help":
+                await tg_answer_callback(cb_id, "Cara hubungkan")
+                await tg_send(chat_id, "🔗 <b>Cara Hubungkan Akun</b>\n1. Buka website HematUangMu\n2. Login → menu <b>Telegram Bot</b>\n3. Klik <b>Buat Kode</b>, salin kode 6-digit\n4. Kirim kode itu ke sini")
+            elif action == "unlink":
+                await db.telegram_links.update_one({"chat_id": chat_id}, {"$unset": {"chat_id": ""}})
+                await tg_answer_callback(cb_id, "Akun diputus")
+                await tg_send(chat_id, "🔓 Akun diputus. Kirim kode baru untuk menghubungkan lagi.")
+            elif action == "help":
+                await tg_answer_callback(cb_id, "Bantuan")
+                await tg_send(chat_id, "<b>Perintah</b>:\n/start – menu utama\n/menu – tampilkan menu\n/rekap – rekap bulan ini\n/coach &lt;pertanyaan&gt; – tanya AI\n/unlink – putuskan akun\n\n<b>Cara catat</b>: kirim teks, foto struk, atau voice note.")
+            else:
+                await tg_answer_callback(cb_id)
+        except Exception as e:
+            logger.exception("callback error")
+            await tg_answer_callback(cb_id, "Error")
+        return {"ok": True}
+
+    # -------- Regular message --------
     msg = update.get("message") or update.get("edited_message")
     if not msg:
         return {"ok": True}
     chat_id = msg["chat"]["id"]
     text = (msg.get("text") or "").strip()
 
-    # Linking flow
-    if text.startswith("/start"):
-        await tg_send(chat_id, "<b>Halo! 👋</b>\nKirim kode 6-digit dari dashboard HematUangMu untuk menghubungkan akun.\nContoh: <code>AB12CD</code>\n\nSetelah terhubung, catat pengeluaran cukup dengan chat seperti: <i>jajan 15k</i>")
+    # Linking flow / command handling
+    if text.startswith("/start") or text.startswith("/menu"):
+        linked = bool(await find_user_by_chat(chat_id))
+        first_name = msg.get("from", {}).get("first_name", "")
+        greeting = (
+            f"<b>Halo {first_name}! 👋</b>\n" if first_name and text.startswith("/start") else "<b>Menu HematUangMu</b>\n"
+        )
+        if not linked and text.startswith("/start"):
+            body = (
+                "Aku bot pencatat keuanganmu 🧠\n"
+                "Untuk mulai, hubungkan akun dulu:\n"
+                "1️⃣ Buka website HematUangMu → menu <b>Telegram Bot</b>\n"
+                "2️⃣ Klik <b>Buat Kode</b>, salin kode 6-digit\n"
+                "3️⃣ Kirim kode itu di sini\n\n"
+                "Atau pilih menu di bawah untuk kepoin fitur:"
+            )
+        else:
+            body = (
+                "Pilih fitur yang mau kamu buka:\n\n"
+                "💡 <i>Tip: cukup kirim <code>jajan 15k</code> atau <code>kenapa boros?</code> — aku otomatis paham maksudmu.</i>"
+                if linked else
+                "Belum terhubung. Pilih <b>🔗 Cara Hubungkan</b> di bawah:"
+            )
+        await tg_send(chat_id, greeting + body, reply_markup=_menu_keyboard(linked))
         return {"ok": True}
     if text.startswith("/help"):
-        await tg_send(chat_id, "Perintah:\n/start - mulai\n/help - bantuan\n/coach - tanya AI coach (misal /coach kenapa aku boros?)\n/unlink - putuskan akun\n\nCatat transaksi: kirim teks (\"bensin 50rb\"), foto struk, atau voice note.\nTanya coach: cukup kirim pertanyaan seperti \"kenapa bulan ini boros?\"")
+        await tg_send(chat_id, "Perintah:\n/start - menu utama\n/menu - tampilkan menu\n/rekap - rekap bulan ini\n/coach &lt;pertanyaan&gt; - tanya AI (misal /coach kenapa aku boros?)\n/unlink - putuskan akun\n\nCatat transaksi: kirim teks (\"bensin 50rb\"), foto struk, atau voice note.\nTanya coach: cukup kirim pertanyaan seperti \"kenapa bulan ini boros?\"")
         return {"ok": True}
     if text.startswith("/unlink"):
         await db.telegram_links.update_one({"chat_id": chat_id}, {"$unset": {"chat_id": ""}})
         await tg_send(chat_id, "Akun diputus. Kirim kode baru untuk menghubungkan lagi.")
+        return {"ok": True}
+    if text.startswith("/rekap"):
+        uid = await find_user_by_chat(chat_id)
+        if not uid:
+            await tg_send(chat_id, "Akun belum terhubung. Kirim kode 6-digit dari dashboard.")
+        else:
+            await tg_send(chat_id, await _monthly_recap_text(uid))
         return {"ok": True}
 
     # Try to match 6-digit link code
