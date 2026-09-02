@@ -1,0 +1,31 @@
+{
+  "summary": "Iter3: Forgot-password / reset-password (OTP via Resend). 9/9 pytest passed covering: (1) forgot for existing user returns 200 + creates row; (2) forgot for non-existent user returns 200 + creates NO row (no enumeration); (3) rate limit — two forgot calls within 60s produce only 1 row; (4) wrong OTP -> 400 + attempts++; (5) 5 wrong attempts -> 429; (6) expired OTP -> 400; (7) non-6-digit OTP -> 400; (8) successful reset -> 200 + access_token cookie + OTP marked used + old password fails (401) + new password succeeds (200) + /api/auth/me works with cookie; (9) google-only user (auth_method=google, no password_hash) can request forgot-password and after reset auth_method becomes 'password' + login by password works. Frontend E2E: Login page has forgot-password-link -> navigates to /forgot-password. Step1 (Lupa Password) shows forgot-identifier + forgot-send-btn; after submit shows Step2 (Masukkan Kode) with reset-otp-input, reset-new-password, reset-submit-btn, resend-otp-btn. OTP input accepts 6 digits via keyboard typing; wrong OTP submission triggers reset-error box with backend message 'Kode salah atau kadaluarsa'.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_forgot_password.py",
+    "/app/test_reports/pytest/iter3_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py forgot-password rate-limit correctly returns generic message without leaking the throttle — good.",
+    "reset-password only checks latest UNUSED OTP; multiple concurrent resets are handled by marking all unused rows used on success — good.",
+    "ForgotPassword.jsx: when user submits with non-email identifier (username/phone), Step 2 requires them to manually type their registered email. This is a mild UX friction but is a deliberate design choice given backend enumeration prevention; consider echoing the masked email from backend if you want smoother UX (optional, non-blocking).",
+    "_send_otp_email logs 'OTP email sent to ... : <resend-id>' but plaintext OTP is not logged when RESEND_API_KEY is set — good (no secret leak).",
+    "Resend test mode restriction: emails to addresses other than the account owner will fail at Resend but the DB row is still created; users will silently not receive email. Consider surfacing a health-check or fallback provider for production."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_forgot_password.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Ephemeral users per pytest run (email tst_fp_<uuid8>@gmail.com, pw OriginalPass123 rotated to BrandNewPass789). Cleaned up in fixture teardown.",
+  "seed_data_creation": "For deterministic OTP verification, tests insert password_resets docs directly into Mongo with bcrypt-hashed known OTP (bypasses email). Google-only user is created directly in Mongo with auth_method='google'.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Reset flow is stable. Regression files: /app/backend/tests/test_auth_hematuangmu.py (iter2) + /app/backend/tests/test_forgot_password.py (iter3). To test OTP success paths, always seed password_resets row directly (bcrypt.hashpw). Do NOT rely on real Resend delivery — test mode only allows sending to geraldygt2204@gmail.com.",
+  "rca of the issue": "N/A — feature implemented correctly and all acceptance criteria verified."
+}

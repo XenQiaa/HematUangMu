@@ -70,6 +70,9 @@ export default function Login() {
               <Button data-testid="login-submit-btn" type="submit" disabled={busy} className="w-full h-11 bg-ochre hover:bg-ochre-hover text-white rounded-xl">
                 {busy ? <Loader2 className="w-4 h-4 animate-spin"/> : "Masuk"}
               </Button>
+              <div className="text-center">
+                <Link data-testid="forgot-password-link" to="/forgot-password" className="text-sm text-stone-500 hover:text-ochre">Lupa password?</Link>
+              </div>
             </form>
 
             <p className="text-sm text-stone-500 mt-6 text-center">

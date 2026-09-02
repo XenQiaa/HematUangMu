@@ -9,7 +9,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Any
 from pydantic import BaseModel, Field, EmailStr
-import httpx, bcrypt, jwt
+import httpx, bcrypt, jwt, resend, asyncio
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -21,6 +21,10 @@ TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_WEBHOOK_SECRET = os.environ.get('TELEGRAM_WEBHOOK_SECRET', 'secret')
 JWT_SECRET = os.environ.get('JWT_SECRET', 'change_me')
 JWT_ALG = "HS256"
+RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
+SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
+if RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -287,6 +291,147 @@ async def auth_login(payload: LoginIn, response: Response):
         "username": user_doc.get("username"), "phone": user_doc.get("phone"),
         "name": user_doc.get("name"), "picture": user_doc.get("picture"),
     }
+
+
+class ForgotIn(BaseModel):
+    identifier: str  # email or username or phone
+
+class ResetIn(BaseModel):
+    email: EmailStr
+    otp: str
+    new_password: str = Field(min_length=6, max_length=128)
+
+
+def _otp_email_html(name: str, otp: str) -> str:
+    return f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#FAF8F5;font-family:Arial,Helvetica,sans-serif;color:#1C1917">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:40px 20px">
+    <tr><td align="center">
+      <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #E7E2D8;border-radius:16px;overflow:hidden">
+        <tr><td style="padding:32px 32px 8px">
+          <div style="display:inline-block;background:#D97706;color:#fff;font-weight:800;padding:6px 12px;border-radius:8px;font-size:14px">HematUangMu</div>
+        </td></tr>
+        <tr><td style="padding:12px 32px 8px">
+          <h1 style="margin:0;font-size:22px;font-weight:800;color:#1C1917">Kode Reset Password</h1>
+          <p style="margin:8px 0 0;color:#57534E;font-size:14px;line-height:1.6">Halo <b>{name}</b>, kamu meminta reset password. Masukkan kode 6 digit di bawah ke halaman reset password.</p>
+        </td></tr>
+        <tr><td style="padding:8px 32px 8px" align="center">
+          <div style="background:#FFF7ED;border:2px dashed #F59E0B;border-radius:12px;padding:20px 12px;margin:16px 0">
+            <div style="font-family:'Courier New',monospace;font-size:38px;font-weight:800;letter-spacing:12px;color:#D97706">{otp}</div>
+          </div>
+        </td></tr>
+        <tr><td style="padding:0 32px 24px">
+          <p style="margin:0;color:#78716C;font-size:13px;line-height:1.6">Kode ini berlaku <b>15 menit</b>. Jangan bagikan ke siapa pun. Kalau kamu tidak minta reset, abaikan email ini — akunmu tetap aman.</p>
+        </td></tr>
+        <tr><td style="padding:16px 32px 32px;border-top:1px solid #F5F5F4">
+          <p style="margin:0;color:#A8A29E;font-size:12px">© 2026 HematUangMu · Rekap keuangan tanpa ribet</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+
+
+async def _send_otp_email(to_email: str, name: str, otp: str) -> bool:
+    if not RESEND_API_KEY:
+        logger.warning(f"[DEV] OTP for {to_email}: {otp} (RESEND_API_KEY not set)")
+        return False
+    params = {
+        "from": f"HematUangMu <{SENDER_EMAIL}>",
+        "to": [to_email],
+        "subject": f"Kode Reset Password: {otp}",
+        "html": _otp_email_html(name, otp),
+    }
+    try:
+        result = await asyncio.to_thread(resend.Emails.send, params)
+        logger.info(f"OTP email sent to {to_email}: {result.get('id')}")
+        return True
+    except Exception as e:
+        logger.error(f"Resend send error: {e}")
+        return False
+
+
+@api.post("/auth/forgot-password")
+async def auth_forgot(payload: ForgotIn):
+    ident = payload.identifier.strip()
+    ident_l = ident.lower()
+    q_or = [{"email": ident_l}, {"username": ident_l}]
+    phone_try = norm_phone(ident)
+    if phone_try:
+        q_or.append({"phone": phone_try})
+    user_doc = await db.users.find_one({"$or": q_or}, {"_id": 0})
+    # Rate limit: 1 OTP per minute per user
+    if user_doc:
+        latest = await db.password_resets.find_one(
+            {"user_id": user_doc["user_id"]},
+            {"_id": 0}, sort=[("created_at", -1)],
+        )
+        if latest:
+            created = latest.get("created_at")
+            if isinstance(created, str):
+                created = datetime.fromisoformat(created)
+            if created and created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if created and (datetime.now(timezone.utc) - created).total_seconds() < 60:
+                return {"ok": True, "message": "Kode sudah dikirim. Cek email kamu."}
+        otp = "".join(random.choices(string.digits, k=6))
+        now = datetime.now(timezone.utc)
+        await db.password_resets.insert_one({
+            "user_id": user_doc["user_id"],
+            "email": user_doc["email"],
+            "otp_hash": hash_pw(otp),
+            "created_at": now.isoformat(),
+            "expires_at": (now + timedelta(minutes=15)).isoformat(),
+            "used": False,
+            "attempts": 0,
+        })
+        await _send_otp_email(user_doc["email"], user_doc.get("name") or user_doc.get("username") or "kamu", otp)
+    # Always return generic message (no user enumeration)
+    return {"ok": True, "message": "Jika akun ditemukan, kode 6-digit telah dikirim ke email terdaftar."}
+
+
+@api.post("/auth/reset-password")
+async def auth_reset(payload: ResetIn, response: Response):
+    email = payload.email.lower().strip()
+    otp = payload.otp.strip()
+    if not re.fullmatch(r"\d{6}", otp):
+        raise HTTPException(400, "Kode OTP tidak valid")
+    user_doc = await db.users.find_one({"email": email})
+    if not user_doc:
+        raise HTTPException(400, "Kode salah atau kadaluarsa")
+    # Get latest unused OTP for this user
+    reset = await db.password_resets.find_one(
+        {"user_id": user_doc["user_id"], "used": False},
+        {"_id": 0}, sort=[("created_at", -1)],
+    )
+    if not reset:
+        raise HTTPException(400, "Kode salah atau kadaluarsa")
+    expires = reset["expires_at"]
+    if isinstance(expires, str):
+        expires = datetime.fromisoformat(expires)
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if expires < datetime.now(timezone.utc):
+        raise HTTPException(400, "Kode kadaluarsa. Minta kode baru.")
+    if reset.get("attempts", 0) >= 5:
+        raise HTTPException(429, "Terlalu banyak percobaan. Minta kode baru.")
+    if not verify_pw(otp, reset["otp_hash"]):
+        await db.password_resets.update_one(
+            {"user_id": user_doc["user_id"], "used": False, "created_at": reset["created_at"]},
+            {"$inc": {"attempts": 1}},
+        )
+        raise HTTPException(400, "Kode salah atau kadaluarsa")
+    # Update password + mark OTP used + upgrade auth_method
+    await db.users.update_one(
+        {"user_id": user_doc["user_id"]},
+        {"$set": {"password_hash": hash_pw(payload.new_password), "auth_method": "password"}},
+    )
+    await db.password_resets.update_many(
+        {"user_id": user_doc["user_id"], "used": False},
+        {"$set": {"used": True}},
+    )
+    _set_access_cookie(response, user_doc["user_id"])
+    return {"ok": True, "message": "Password berhasil direset. Kamu sudah masuk."}
 
 # ---------------- Categories ----------------
 @api.get("/categories")
