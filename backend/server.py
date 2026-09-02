@@ -1,4 +1,4 @@
-"""CatatYuk AI - Rekap Keuangan Telegram backend."""
+"""HematUangMu - Rekap Keuangan Telegram backend."""
 from fastapi import FastAPI, APIRouter, Request, HTTPException, Response, Cookie, UploadFile, File
 from fastapi.responses import StreamingResponse, JSONResponse
 from dotenv import load_dotenv
@@ -8,8 +8,8 @@ import os, io, csv, json, uuid, random, string, base64, logging, tempfile, re, s
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Any
-from pydantic import BaseModel, Field
-import httpx
+from pydantic import BaseModel, Field, EmailStr
+import httpx, bcrypt, jwt
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -19,6 +19,8 @@ DB_NAME = os.environ['DB_NAME']
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_WEBHOOK_SECRET = os.environ.get('TELEGRAM_WEBHOOK_SECRET', 'secret')
+JWT_SECRET = os.environ.get('JWT_SECRET', 'change_me')
+JWT_ALG = "HS256"
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -26,7 +28,7 @@ db = client[DB_NAME]
 app = FastAPI()
 api = APIRouter(prefix="/api")
 
-logger = logging.getLogger("catatyuk")
+logger = logging.getLogger("hematuangmu")
 logging.basicConfig(level=logging.INFO)
 
 DEFAULT_CATEGORIES = [
@@ -50,7 +52,10 @@ class User(BaseModel):
     email: str
     name: str
     picture: Optional[str] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    username: Optional[str] = None
+    phone: Optional[str] = None
+    auth_method: Optional[str] = "google"
+    created_at: Any = None
 
 class Transaction(BaseModel):
     id: str
@@ -74,28 +79,63 @@ class ParseTextIn(BaseModel):
     text: str
 
 # ---------------- Helpers ----------------
+def hash_pw(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+
+def verify_pw(pw: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode(), hashed.encode())
+    except Exception:
+        return False
+
+def make_jwt(user_id: str, days: int = 7) -> str:
+    return jwt.encode(
+        {"sub": user_id, "exp": datetime.now(timezone.utc) + timedelta(days=days), "type": "access"},
+        JWT_SECRET, algorithm=JWT_ALG,
+    )
+
+def norm_phone(p: str) -> str:
+    p = re.sub(r"[^\d+]", "", p or "")
+    if p.startswith("0"): p = "+62" + p[1:]
+    if p.startswith("62"): p = "+" + p
+    return p
+
 async def get_current_user(request: Request) -> User:
-    token = request.cookies.get("session_token")
+    # Try JWT access_token first
+    token = request.cookies.get("access_token")
     if not token:
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
             token = auth[7:]
-    if not token:
-        raise HTTPException(401, "Not authenticated")
-    session = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
-    if not session:
-        raise HTTPException(401, "Invalid session")
-    expires_at = session["expires_at"]
-    if isinstance(expires_at, str):
-        expires_at = datetime.fromisoformat(expires_at)
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-    if expires_at < datetime.now(timezone.utc):
-        raise HTTPException(401, "Session expired")
-    user_doc = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0})
-    if not user_doc:
-        raise HTTPException(401, "User not found")
-    return User(**user_doc)
+    if token:
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+            user_doc = await db.users.find_one({"user_id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+            if user_doc:
+                return User(**user_doc)
+        except jwt.ExpiredSignatureError:
+            pass
+        except jwt.InvalidTokenError:
+            pass
+    # Fallback: session_token (Google OAuth)
+    stoken = request.cookies.get("session_token")
+    if not stoken:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            stoken = auth[7:]
+    if stoken:
+        session = await db.user_sessions.find_one({"session_token": stoken}, {"_id": 0})
+        if session:
+            expires_at = session["expires_at"]
+            if isinstance(expires_at, str):
+                expires_at = datetime.fromisoformat(expires_at)
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at >= datetime.now(timezone.utc):
+                user_doc = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0, "password_hash": 0})
+                if user_doc:
+                    return User(**user_doc)
+    raise HTTPException(401, "Not authenticated")
 
 async def ensure_categories(user_id: str):
     exists = await db.categories.count_documents({"user_id": user_id})
@@ -169,7 +209,84 @@ async def auth_logout(request: Request, response: Response):
     if token:
         await db.user_sessions.delete_one({"session_token": token})
     response.delete_cookie("session_token", path="/")
+    response.delete_cookie("access_token", path="/")
     return {"ok": True}
+
+
+class RegisterIn(BaseModel):
+    username: str = Field(min_length=3, max_length=32)
+    email: EmailStr
+    phone: str = Field(min_length=8, max_length=20)
+    password: str = Field(min_length=6, max_length=128)
+    name: Optional[str] = None
+
+class LoginIn(BaseModel):
+    identifier: str
+    password: str
+
+def _set_access_cookie(response: Response, user_id: str):
+    token = make_jwt(user_id)
+    response.set_cookie(
+        key="access_token", value=token,
+        httponly=True, secure=True, samesite="none",
+        path="/", max_age=7 * 24 * 60 * 60,
+    )
+    return token
+
+@api.post("/auth/register")
+async def auth_register(payload: RegisterIn, response: Response):
+    email = payload.email.lower().strip()
+    username = payload.username.strip().lower()
+    if not re.fullmatch(r"[a-z0-9_.]{3,32}", username):
+        raise HTTPException(400, "Username hanya huruf kecil, angka, . dan _")
+    phone = norm_phone(payload.phone)
+    if not re.fullmatch(r"\+?\d{8,20}", phone):
+        raise HTTPException(400, "Nomor HP tidak valid")
+    # uniqueness
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(409, "Email sudah terdaftar")
+    if await db.users.find_one({"username": username}):
+        raise HTTPException(409, "Username sudah dipakai")
+    if await db.users.find_one({"phone": phone}):
+        raise HTTPException(409, "Nomor HP sudah terdaftar")
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    doc = {
+        "user_id": user_id,
+        "email": email,
+        "username": username,
+        "phone": phone,
+        "name": payload.name or username,
+        "picture": None,
+        "password_hash": hash_pw(payload.password),
+        "auth_method": "password",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.insert_one(doc)
+    await ensure_categories(user_id)
+    _set_access_cookie(response, user_id)
+    return {"user_id": user_id, "email": email, "username": username, "phone": phone, "name": doc["name"], "picture": None}
+
+@api.post("/auth/login")
+async def auth_login(payload: LoginIn, response: Response):
+    ident = payload.identifier.strip()
+    ident_l = ident.lower()
+    # Match by email, username, or phone
+    q_or = [{"email": ident_l}, {"username": ident_l}]
+    phone_try = norm_phone(ident)
+    if phone_try:
+        q_or.append({"phone": phone_try})
+    user_doc = await db.users.find_one({"$or": q_or})
+    if not user_doc or not user_doc.get("password_hash"):
+        raise HTTPException(401, "Akun tidak ditemukan atau belum punya password. Coba login Google.")
+    if not verify_pw(payload.password, user_doc["password_hash"]):
+        raise HTTPException(401, "Password salah")
+    _set_access_cookie(response, user_doc["user_id"])
+    await ensure_categories(user_doc["user_id"])
+    return {
+        "user_id": user_doc["user_id"], "email": user_doc["email"],
+        "username": user_doc.get("username"), "phone": user_doc.get("phone"),
+        "name": user_doc.get("name"), "picture": user_doc.get("picture"),
+    }
 
 # ---------------- Categories ----------------
 @api.get("/categories")
@@ -253,7 +370,7 @@ async def export_csv(request: Request):
     return Response(
         content=buf.getvalue().encode("utf-8-sig"),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=catatyuk_transaksi.csv"},
+        headers={"Content-Disposition": "attachment; filename=hematuangmu_transaksi.csv"},
     )
 
 # ---------------- Analytics ----------------
@@ -487,7 +604,7 @@ async def tg_webhook(secret: str, request: Request):
 
     # Linking flow
     if text.startswith("/start"):
-        await tg_send(chat_id, "<b>Halo! 👋</b>\nKirim kode 6-digit dari dashboard CatatYuk untuk menghubungkan akun.\nContoh: <code>AB12CD</code>\n\nSetelah terhubung, catat pengeluaran cukup dengan chat seperti: <i>jajan 15k</i>")
+        await tg_send(chat_id, "<b>Halo! 👋</b>\nKirim kode 6-digit dari dashboard HematUangMu untuk menghubungkan akun.\nContoh: <code>AB12CD</code>\n\nSetelah terhubung, catat pengeluaran cukup dengan chat seperti: <i>jajan 15k</i>")
         return {"ok": True}
     if text.startswith("/help"):
         await tg_send(chat_id, "Perintah:\n/start - mulai\n/help - bantuan\n/unlink - putuskan akun\n\nCatat transaksi: kirim teks (\"bensin 50rb\"), foto struk, atau voice note.")
@@ -511,7 +628,7 @@ async def tg_webhook(secret: str, request: Request):
 
     user_id = await find_user_by_chat(chat_id)
     if not user_id:
-        await tg_send(chat_id, "Akun belum terhubung. Kirim kode 6-digit dari dashboard CatatYuk.")
+        await tg_send(chat_id, "Akun belum terhubung. Kirim kode 6-digit dari dashboard HematUangMu.")
         return {"ok": True}
 
     try:

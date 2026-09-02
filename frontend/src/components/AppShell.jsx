@@ -20,7 +20,7 @@ export default function AppShell() {
           <div className="w-9 h-9 rounded-lg bg-ochre flex items-center justify-center">
             <Wallet className="w-4 h-4 text-white" />
           </div>
-          <span className="font-extrabold tracking-tight text-lg">CatatYuk<span className="text-ochre">.</span></span>
+          <span className="font-extrabold tracking-tight text-lg">HematUangMu<span className="text-ochre">.</span></span>
         </button>
         <nav className="space-y-1 flex-1">
           <NavLink data-testid="nav-dashboard-link" to="/dashboard" className={link}>
@@ -56,7 +56,7 @@ export default function AppShell() {
           <div className="w-7 h-7 rounded-lg bg-ochre flex items-center justify-center">
             <Wallet className="w-3.5 h-3.5 text-white" />
           </div>
-          <span className="font-extrabold">CatatYuk<span className="text-ochre">.</span></span>
+          <span className="font-extrabold">HematUangMu<span className="text-ochre">.</span></span>
         </button>
         <Avatar className="w-8 h-8">
           <AvatarImage src={user?.picture} />

@@ -39,7 +39,7 @@ export default function Landing() {
             <div className="w-8 h-8 rounded-lg bg-ochre flex items-center justify-center">
               <Wallet className="w-4 h-4 text-white" />
             </div>
-            <span className="font-extrabold tracking-tight text-lg">CatatYuk<span className="text-ochre">.</span></span>
+            <span className="font-extrabold tracking-tight text-lg">HematUangMu<span className="text-ochre">.</span></span>
           </div>
           <div className="flex items-center gap-3">
             {user ? (
@@ -47,9 +47,14 @@ export default function Landing() {
                 Buka Dashboard <ArrowRight className="w-4 h-4 ml-1" />
               </Button>
             ) : (
-              <Button data-testid="nav-login-btn" onClick={loginWithGoogle} className="bg-ochre hover:bg-ochre-hover text-white rounded-full h-10 px-5">
-                Masuk dengan Google
-              </Button>
+              <>
+                <Button data-testid="nav-login-btn" onClick={() => nav("/login")} variant="ghost" className="rounded-full h-10 px-4 hidden sm:inline-flex">
+                  Masuk
+                </Button>
+                <Button data-testid="nav-register-btn" onClick={() => nav("/register")} className="bg-ochre hover:bg-ochre-hover text-white rounded-full h-10 px-5">
+                  Daftar Gratis
+                </Button>
+              </>
             )}
           </div>
         </div>
@@ -65,11 +70,11 @@ export default function Landing() {
             Catat keuangan<br/>secepat <span className="text-ochre">kirim chat.</span>
           </h1>
           <p className="mt-6 text-lg text-stone-600 leading-relaxed max-w-xl">
-            Cukup kirim <span className="font-mono bg-stone-100 px-1.5 py-0.5 rounded">&quot;jajan 15k&quot;</span> ke bot Telegram — CatatYuk AI otomatis mencatatnya sebagai pengeluaran Rp 15.000 di dashboard kamu.
+            Cukup kirim <span className="font-mono bg-stone-100 px-1.5 py-0.5 rounded">&quot;jajan 15k&quot;</span> ke bot Telegram — HematUangMu AI otomatis mencatatnya sebagai pengeluaran Rp 15.000 di dashboard kamu.
             Foto struk & voice note juga bisa.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
-            <Button data-testid="hero-start-btn" onClick={user ? () => nav("/dashboard") : loginWithGoogle} className="bg-stone-900 hover:bg-stone-800 text-white rounded-full h-12 px-7 text-base">
+            <Button data-testid="hero-start-btn" onClick={user ? () => nav("/dashboard") : () => nav("/register")} className="bg-stone-900 hover:bg-stone-800 text-white rounded-full h-12 px-7 text-base">
               Mulai Gratis <ArrowRight className="w-4 h-4 ml-1" />
             </Button>
             <Button data-testid="hero-demo-btn" onClick={cycle} variant="outline" className="rounded-full h-12 px-6 border-stone-300 text-base">
@@ -92,7 +97,7 @@ export default function Landing() {
                 <MessageCircle className="w-4 h-4 text-white" />
               </div>
               <div>
-                <div className="text-white font-semibold text-sm">CatatYuk Bot</div>
+                <div className="text-white font-semibold text-sm">HematUangMu Bot</div>
                 <div className="text-white/70 text-xs flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 pulse-dot"/> aktif sekarang
                 </div>
@@ -144,7 +149,7 @@ export default function Landing() {
           <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-stone-900">
             Tiga cara cepat, satu <span className="text-ochre">dashboard</span> rapi.
           </h2>
-          <p className="mt-3 text-stone-600 text-lg">AI CatatYuk mengerti bahasa sehari-hari kamu, baca struk otomatis, sampai transkrip voice note.</p>
+          <p className="mt-3 text-stone-600 text-lg">AI HematUangMu mengerti bahasa sehari-hari kamu, baca struk otomatis, sampai transkrip voice note.</p>
         </div>
         <div className="grid md:grid-cols-3 gap-5 mt-10">
           {[
@@ -180,14 +185,14 @@ export default function Landing() {
           ))}
         </div>
         <div className="mt-16 text-center">
-          <Button data-testid="cta-bottom-btn" onClick={user ? () => nav("/dashboard") : loginWithGoogle} className="bg-ochre hover:bg-ochre-hover text-white rounded-full h-12 px-8 text-base">
+          <Button data-testid="cta-bottom-btn" onClick={user ? () => nav("/dashboard") : () => nav("/register")} className="bg-ochre hover:bg-ochre-hover text-white rounded-full h-12 px-8 text-base">
             Coba Sekarang, Gratis <ArrowRight className="w-4 h-4 ml-1" />
           </Button>
         </div>
       </section>
 
       <footer className="border-t border-stone-200/60 py-8 text-center text-sm text-stone-500">
-        <div>© 2026 CatatYuk. Dibuat dengan ❤ untuk pencatatan keuangan tanpa ribet.</div>
+        <div>© 2026 HematUangMu. Dibuat dengan ❤ untuk pencatatan keuangan tanpa ribet.</div>
       </footer>
     </div>
   );

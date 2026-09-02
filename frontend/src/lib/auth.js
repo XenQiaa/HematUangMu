@@ -19,13 +19,24 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    // If returning from OAuth callback, skip the /me check; AuthCallback will handle it.
     if (window.location.hash?.includes("session_id=")) {
       setLoading(false);
       return;
     }
     check();
   }, [check]);
+
+  const login = async (identifier, password) => {
+    const { data } = await http.post("/auth/login", { identifier, password });
+    setUser(data);
+    return data;
+  };
+
+  const register = async (payload) => {
+    const { data } = await http.post("/auth/register", payload);
+    setUser(data);
+    return data;
+  };
 
   const logout = async () => {
     await http.post("/auth/logout").catch(() => {});
@@ -34,7 +45,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthCtx.Provider value={{ user, setUser, loading, refresh: check, logout }}>
+    <AuthCtx.Provider value={{ user, setUser, loading, refresh: check, login, register, logout }}>
       {children}
     </AuthCtx.Provider>
   );
@@ -47,3 +58,12 @@ export const loginWithGoogle = () => {
   const redirectUrl = window.location.origin + "/dashboard";
   window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
 };
+
+export function formatApiError(detail) {
+  if (detail == null) return "Terjadi kesalahan. Coba lagi.";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail))
+    return detail.map((e) => (e && typeof e.msg === "string" ? e.msg : JSON.stringify(e))).filter(Boolean).join(" · ");
+  if (detail && typeof detail.msg === "string") return detail.msg;
+  return String(detail);
+}
