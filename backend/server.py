@@ -807,7 +807,7 @@ async def tg_webhook(secret: str, request: Request):
         await tg_send(chat_id, "<b>Halo! 👋</b>\nKirim kode 6-digit dari dashboard HematUangMu untuk menghubungkan akun.\nContoh: <code>AB12CD</code>\n\nSetelah terhubung, catat pengeluaran cukup dengan chat seperti: <i>jajan 15k</i>")
         return {"ok": True}
     if text.startswith("/help"):
-        await tg_send(chat_id, "Perintah:\n/start - mulai\n/help - bantuan\n/unlink - putuskan akun\n\nCatat transaksi: kirim teks (\"bensin 50rb\"), foto struk, atau voice note.")
+        await tg_send(chat_id, "Perintah:\n/start - mulai\n/help - bantuan\n/coach - tanya AI coach (misal /coach kenapa aku boros?)\n/unlink - putuskan akun\n\nCatat transaksi: kirim teks (\"bensin 50rb\"), foto struk, atau voice note.\nTanya coach: cukup kirim pertanyaan seperti \"kenapa bulan ini boros?\"")
         return {"ok": True}
     if text.startswith("/unlink"):
         await db.telegram_links.update_one({"chat_id": chat_id}, {"$unset": {"chat_id": ""}})
@@ -851,6 +851,17 @@ async def tg_webhook(secret: str, request: Request):
             return {"ok": True}
         # Text
         if text:
+            # Coach intent?
+            if _is_coach_intent(text):
+                q = text
+                if q.lower().startswith("/coach") or q.lower().startswith("/tanya"):
+                    q = q.split(" ", 1)[1] if " " in q else "Kasih ringkasan keuanganku bulan ini dan saran hemat."
+                try:
+                    answer = await ask_coach(user_id, q, 60)
+                    await tg_send(chat_id, f"🧠 <b>Hemat AI</b>\n{answer}")
+                except Exception as e:
+                    await tg_send(chat_id, f"⚠️ Coach lagi sibuk: {str(e)[:100]}")
+                return {"ok": True}
             data = await parse_with_llm(text)
             doc = await save_ai_transaction(user_id, data, "telegram_text")
             emoji = "💸" if doc["type"] == "expense" else "💰"
@@ -1082,6 +1093,134 @@ async def wrapped(request: Request, year: int, month: int):
         "top_keywords": top_words,
         "story": story,
     }
+
+
+# ---------------- AI Coach ----------------
+class CoachIn(BaseModel):
+    question: str
+    days: Optional[int] = 60
+
+async def _build_finance_context(user_id: str, days: int = 60) -> str:
+    """Aggregate the user's recent finance data as compact text for the LLM."""
+    end = datetime.now(timezone.utc).date()
+    start = (end - timedelta(days=max(7, min(180, int(days))))).isoformat()
+    rows = await db.transactions.find(
+        {"user_id": user_id, "date": {"$gte": start}},
+        {"_id": 0},
+    ).sort("date", 1).to_list(5000)
+    if not rows:
+        return "TIDAK ADA DATA TRANSAKSI di rentang ini."
+    income = sum(r["amount"] for r in rows if r["type"] == "income")
+    expense = sum(r["amount"] for r in rows if r["type"] == "expense")
+    # This month vs previous month
+    ym_now = end.isoformat()[:7]
+    prev = (end.replace(day=1) - timedelta(days=1))
+    ym_prev = prev.isoformat()[:7]
+    def sum_month(ym, t):
+        return sum(r["amount"] for r in rows if r["date"].startswith(ym) and r["type"] == t)
+    exp_now, exp_prev = sum_month(ym_now, "expense"), sum_month(ym_prev, "expense")
+    inc_now, inc_prev = sum_month(ym_now, "income"), sum_month(ym_prev, "income")
+    # By category this month
+    cat_now, cat_prev = {}, {}
+    for r in rows:
+        if r["type"] != "expense": continue
+        if r["date"].startswith(ym_now):
+            cat_now[r["category"]] = cat_now.get(r["category"], 0) + r["amount"]
+        elif r["date"].startswith(ym_prev):
+            cat_prev[r["category"]] = cat_prev.get(r["category"], 0) + r["amount"]
+    top_now = sorted(cat_now.items(), key=lambda x: -x[1])[:6]
+    # Budgets & progress
+    budgets = await db.budgets.find({"user_id": user_id}, {"_id": 0}).to_list(100)
+    bud_lines = []
+    for b in budgets:
+        spent = await _month_expense(user_id, b["category"], ym_now)
+        pct = int(spent * 100 / b["monthly_limit"]) if b["monthly_limit"] else 0
+        bud_lines.append(f"- {b['category']}: {spent}/{b['monthly_limit']} ({pct}%)")
+    # Top individual expenses this month
+    big_this = sorted([r for r in rows if r["date"].startswith(ym_now) and r["type"] == "expense"],
+                      key=lambda r: -r["amount"])[:5]
+    lines = [
+        f"Rentang: {start} s/d {end.isoformat()}",
+        f"Total pemasukan {days}h: Rp{income}",
+        f"Total pengeluaran {days}h: Rp{expense}",
+        f"Bulan ini ({ym_now}): pemasukan Rp{inc_now}, pengeluaran Rp{exp_now}",
+        f"Bulan lalu ({ym_prev}): pemasukan Rp{inc_prev}, pengeluaran Rp{exp_prev}",
+    ]
+    if exp_prev > 0:
+        diff = exp_now - exp_prev
+        pct = int(diff * 100 / exp_prev)
+        lines.append(f"Perubahan pengeluaran vs bulan lalu: Rp{diff:+d} ({pct:+d}%)")
+    if top_now:
+        lines.append("Top kategori bulan ini:")
+        for c, a in top_now:
+            prev_a = cat_prev.get(c, 0)
+            delta = f" (vs {ym_prev}: Rp{prev_a})" if prev_a else ""
+            lines.append(f"  - {c}: Rp{a}{delta}")
+    if bud_lines:
+        lines.append("Budget aktif:")
+        lines.extend(bud_lines)
+    if big_this:
+        lines.append("Pengeluaran terbesar bulan ini:")
+        for r in big_this:
+            lines.append(f"  - {r['date']} · {r['category']} · {r.get('description','')} · Rp{r['amount']}")
+    return "\n".join(lines)
+
+
+async def ask_coach(user_id: str, question: str, days: int = 60) -> str:
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(500, "AI Coach tidak tersedia")
+    ctx = await _build_finance_context(user_id, days)
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=f"coach-{user_id}",
+        system_message=(
+            "Kamu adalah AI Financial Coach Indonesia bernama Hemat. Nada hangat, empatik, ringkas, dan konkret. "
+            "Jawab dalam Bahasa Indonesia. Gunakan angka dari DATA KEUANGAN yang diberikan (jangan mengarang). "
+            "Kalau user tanya alasan boros/hemat/tips: sebutkan kategori spesifik + angka + saran aksi konkret "
+            "(misal 'Kopi naik 40%, coba brew di rumah 2x/minggu bisa hemat Rp X'). "
+            "Kalau user cuma sapa/tanya umum: balas singkat dan tawarkan hal-hal yang bisa kamu bantu. "
+            "Format: gunakan poin bullet (- ) untuk lebih dari 1 saran, max 6 baris total, hindari markdown heading."
+        ),
+    ).with_model("gemini", "gemini-3-flash-preview")
+    prompt = f"DATA KEUANGAN:\n{ctx}\n\nPERTANYAAN USER: {question}"
+    resp = await chat.send_message(UserMessage(text=prompt))
+    return str(resp).strip()
+
+
+@api.post("/coach")
+async def coach_endpoint(payload: CoachIn, request: Request):
+    user = await get_current_user(request)
+    q = payload.question.strip()
+    if not q:
+        raise HTTPException(400, "Pertanyaan kosong")
+    answer = await ask_coach(user.user_id, q, payload.days or 60)
+    return {"answer": answer}
+
+
+COACH_KEYWORDS = re.compile(
+    r"\b(kenapa|kok|gimana|bagaimana|tips|saran|rekomendasi|analisa|analisis|coach|tanya|"
+    r"boros|hemat|rangkum|rekap|jelasin|jelaskan|kategori\s+apa|apa\s+yang|berapa\s+total)\b",
+    re.IGNORECASE,
+)
+
+_AMOUNT_UNIT = re.compile(r"\b\d+([.,]\d+)?\s?(k|rb|ribu|jt|jutaan|juta|rp|m|milyar|miliar)\b", re.IGNORECASE)
+
+def _is_coach_intent(text: str) -> bool:
+    t = text.strip()
+    tl = t.lower()
+    if tl.startswith("/coach") or tl.startswith("/tanya") or tl.startswith("/rekap"):
+        return True
+    if tl in {"/help", "/start", "/unlink"}:
+        return False
+    # Message with monetary units almost always a transaction, not a coach question
+    if _AMOUNT_UNIT.search(t):
+        return False
+    if t.endswith("?"):
+        return True
+    if COACH_KEYWORDS.search(t):
+        return True
+    return False
 
 
 # ---------------- Register ----------------

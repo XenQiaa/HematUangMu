@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
-import { LayoutDashboard, ListOrdered, Send, LogOut, Wallet, Target, Repeat } from "lucide-react";
+import { LayoutDashboard, ListOrdered, Send, LogOut, Wallet, Target, Repeat, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
@@ -34,6 +34,9 @@ export default function AppShell() {
           </NavLink>
           <NavLink data-testid="nav-recurring-link" to="/recurring" className={link}>
             <Repeat className="w-4 h-4" /> Berulang
+          </NavLink>
+          <NavLink data-testid="nav-coach-link" to="/coach" className={link}>
+            <Brain className="w-4 h-4" /> AI Coach
           </NavLink>
           <NavLink data-testid="nav-telegram-link" to="/telegram" className={link}>
             <Send className="w-4 h-4" /> Telegram Bot
@@ -84,6 +87,9 @@ export default function AppShell() {
           </NavLink>
           <NavLink to="/budgets" className={({isActive}) => `flex flex-col items-center gap-0.5 py-1 px-3 rounded-lg ${isActive ? "text-ochre" : "text-stone-500"}`}>
             <Target className="w-5 h-5"/><span className="text-[10px] font-medium">Budget</span>
+          </NavLink>
+          <NavLink to="/coach" className={({isActive}) => `flex flex-col items-center gap-0.5 py-1 px-3 rounded-lg ${isActive ? "text-ochre" : "text-stone-500"}`}>
+            <Brain className="w-5 h-5"/><span className="text-[10px] font-medium">Coach</span>
           </NavLink>
           <NavLink to="/telegram" className={({isActive}) => `flex flex-col items-center gap-0.5 py-1 px-3 rounded-lg ${isActive ? "text-ochre" : "text-stone-500"}`}>
             <Send className="w-5 h-5"/><span className="text-[10px] font-medium">Telegram</span>

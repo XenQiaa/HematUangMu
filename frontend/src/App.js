@@ -10,6 +10,7 @@ import Transactions from "@/pages/Transactions";
 import TelegramPage from "@/pages/TelegramPage";
 import Budgets from "@/pages/Budgets";
 import Recurring from "@/pages/Recurring";
+import Coach from "@/pages/Coach";
 import Wrapped from "@/pages/Wrapped";
 import AuthCallback from "@/pages/AuthCallback";
 import AppShell from "@/components/AppShell";
@@ -38,6 +39,7 @@ function AppRouter() {
         <Route path="/transactions" element={<Transactions />} />
         <Route path="/budgets" element={<Budgets />} />
         <Route path="/recurring" element={<Recurring />} />
+        <Route path="/coach" element={<Coach />} />
         <Route path="/telegram" element={<TelegramPage />} />
       </Route>
       <Route path="/wrapped/:year/:month" element={<Protected><Wrapped /></Protected>} />
