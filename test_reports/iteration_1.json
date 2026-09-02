@@ -1,0 +1,30 @@
+{
+  "summary": "First-finish smoke test of CatatYuk AI. Backend + frontend integrations working end-to-end. Auth-by-Bearer, categories seeding, transactions CRUD+filters, analytics, CSV export, Gemini 3 Flash text parsing (3/3 correct), Telegram status/link-code all pass. Frontend landing renders, dashboard w/ session cookie shows summary cards, AI quick-add creates transaction with toast, Transactions page filters + export present, Telegram page shows amber warning + generated 6-char code + copy button.",
+  "tested_scope": ["backend", "frontend", "auth", "integration"],
+  "passed": [
+    "GET /api/auth/me returns 401 without token, 200 with Bearer token",
+    "POST /api/auth/session returns 400 without session_id",
+    "GET /api/categories returns 12 Indonesian defaults (Makanan & Minuman ... Pendapatan Lain)",
+    "POST/GET/PUT/DELETE /api/transactions all work; date range/type/q filters all return correct count",
+    "GET /api/analytics/summary returns income/expense/balance/count/by_category/daily",
+    "GET /api/transactions/export returns text/csv with Indonesian headers (Tanggal, Jenis, Kategori, Deskripsi, Jumlah (Rp), Sumber)",
+    "POST /api/parse/text 'jajan 15k' -> 15000 expense Makanan & Minuman",
+    "POST /api/parse/text 'gaji bulanan 8.5jt' -> 8500000 income Gaji",
+    "POST /api/parse/text 'bensin pertamax 50rb' -> 50000 expense Transportasi",
+    "GET /api/telegram/status returns bot_configured=false (empty token path)",
+    "POST /api/telegram/link-code returns 6-char code + expires_in_min=15",
+    "Landing page loads with hero, Telegram mockup, CTA",
+    "Dashboard with session cookie: summary-balance/income/expense, ai-text-input, ai-submit-btn all present",
+    "AI quick-add 'kopi susu 22rb' shows success toast (Rp 22.000 · Makanan & Minuman) and refreshes expense",
+    "Transactions page has search-input, filter-type-select, filter-category-select, filter-start-date, filter-end-date, export-csv-btn",
+    "Telegram page shows amber warning (bot belum dikonfigurasi), generate-code-btn creates link-code-display (e.g. 2NIJ5E), copy-code-btn present"
+  ],
+  "failed": [],
+  "action_items": [
+    "test_credentials.md is empty - consider documenting how to bootstrap mock sessions (this test used a Mongo-inserted user + session token)."
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true,
+  "notes": "TELEGRAM_BOT_TOKEN intentionally empty - bot_configured=false path verified. Emergent LLM key working (Gemini 3 Flash parsed all 3 Indonesian phrases correctly incl. 8.5jt=>8500000). Voice/image parse and Telegram webhook not exercised (require real bot token / audio fixtures) - defer to full testing."
+}

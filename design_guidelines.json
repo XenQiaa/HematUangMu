@@ -1,0 +1,92 @@
+{
+  "app_name": "CatatYuk AI - Rekap Keuangan Telegram",
+  "archetype": "ARCHETYPE 1: ORGANIC & EARTHY (Warm Trust, Personal & Calm)",
+  "language": "Indonesian (Bahasa Indonesia)",
+  "currency": "IDR (Rupiah - e.g. Rp 15.000, Rp 1.250.000)",
+  "typography": {
+    "font_family_heading": "'Plus Jakarta Sans', 'Outfit', sans-serif",
+    "font_family_body": "'Plus Jakarta Sans', 'Inter', sans-serif",
+    "font_family_mono": "'JetBrains Mono', monospace",
+    "h1_hero": "text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-tight",
+    "h2_section": "text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight",
+    "h3_subsection": "text-xl sm:text-2xl font-semibold tracking-tight",
+    "h4_card": "text-lg sm:text-xl font-semibold",
+    "body_text": "text-base leading-relaxed text-stone-700 dark:text-stone-300",
+    "label_text": "text-xs font-semibold uppercase tracking-wider text-stone-500 dark:text-stone-400"
+  },
+  "color_palette": {
+    "theme_mode": "Warm Light (Default) with Dark Mode toggle support",
+    "background_light": "#FAF8F5 (Warm Cream Sand)",
+    "background_dark": "#121417 (Deep Charcoal)",
+    "surface_card_light": "#FFFFFF (Pure White with subtle warm border)",
+    "surface_card_dark": "#1A1D21 (Rich Dark Slate)",
+    "primary_brand": "#D97706 (Warm Ochre / Amber Accent)",
+    "primary_brand_hover": "#B45309",
+    "secondary_terracotta": "#E06D53 (Terracotta Rust)",
+    "emerald_income": "#10B981 (Fresh Mint Green)",
+    "rose_expense": "#F43F5E (Warm Rose / Crimson)",
+    "telegram_blue": "#2AABEE (Telegram Brand Accent)",
+    "border_light": "rgba(215, 205, 190, 0.4)",
+    "border_dark": "rgba(255, 255, 255, 0.1)",
+    "text_primary_light": "#1C1917 (Stone 900)",
+    "text_primary_dark": "#F5F5F4 (Stone 100)",
+    "text_muted_light": "#78716C (Stone 500)",
+    "text_muted_dark": "#A8A29E (Stone 400)",
+    "forbidden_colors": ["#7351B7 (AI Purple Gradient forbidden)", "#1B93A4 (Teal forbidden)"]
+  },
+  "layout_and_spacing": {
+    "generous_spacing": "Use p-6 to p-8 inside cards, py-16 to py-24 for marketing sections",
+    "bento_grid": "3-column grid for summary stats (Balance, Expense, Income), 8-col / 4-col split for main chart and quick Telegram feed",
+    "card_style": "Flat surface with 1px border (#E7E2D8), gentle rounded-2xl corners, hover elevation translate-y-[-2px] shadow-sm",
+    "header_style": "Sticky top-0 z-50 backdrop-blur-xl bg-white/80 dark:bg-stone-900/80 border-b border-stone-200/50 dark:border-stone-800/50 (NEVER fully transparent)"
+  },
+  "components_and_features": {
+    "landing_hero": "Interactive live Telegram Chat Mockup where user clicks sample prompts ('jajan 15k', receipt photo, or voice note) to watch it parse live into structured expense item in real-time.",
+    "google_auth": "Emergent Google Sign-In modal/button with clear Indonesian user consent ('Masuk dengan Google').",
+    "dashboard_summary": {
+      "total_balance_card": "Hero balance display with trend indicator (+% vs last month)",
+      "income_vs_expense_cards": "Dual mini-cards showing total income and total expenses with progress bar",
+      "spending_category_pie": "Interactive Donut chart using Recharts with legend & breakdown list",
+      "daily_trend_chart": "Smooth Area chart or Bar chart with date filter toggles (7 Hari, Bulan Ini, 30 Hari, Custom)"
+    },
+    "transactions_list": {
+      "filters": "Search by title/notes, Filter by Type (Semua, Pengeluaran, Pemasukan), Category dropdown filter, Date range picker",
+      "actions": "Manual Add Expense/Income dialog, Edit Transaction modal, Delete confirmation, Export CSV trigger"
+    },
+    "telegram_linking_page": {
+      "step_by_step": "1. Buka Bot Telegram (@CatatYuk_Bot) -> 2. Kirim Kode Hubungkan -> 3. Terhubung secara instant!",
+      "otp_card": "Unique 6-digit link code with 1-click copy button & QR code option",
+      "connection_status": "Live badge indicator (Terhubung / Belum Terhubung) with unpair option"
+    },
+    "categories_manager": {
+      "default_categories": [
+        {"name": "Makanan & Minuman", "icon": "Utensils", "color": "#F59E0B"},
+        {"name": "Transportasi", "icon": "Car", "color": "#3B82F6"},
+        {"name": "Belanja", "icon": "ShoppingBag", "color": "#EC4899"},
+        {"name": "Tagihan & Utilitas", "icon": "Receipt", "color": "#8B5CF6"},
+        {"name": "Hiburan", "icon": "Film", "color": "#10B981"},
+        {"name": "Kesehatan", "icon": "HeartPulse", "color": "#EF4444"},
+        {"name": "Gaji & Pendapatan", "icon": "Wallet", "color": "#059669"},
+        {"name": "Lainnya", "icon": "MoreHorizontal", "color": "#6B7280"}
+      ]
+    }
+  },
+  "media_assets": {
+    "receipt_demo_image": "https://images.unsplash.com/photo-1731686602391-7484df33a03c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTV8MHwxfHNlYXJjaHwyfHxmaW5hbmNlJTIwcmVjZWlwdHxlbnwwfHx8fDE3ODgzMTU1MTd8MA&ixlib=rb-4.1.0&q=85",
+    "coffee_shop_lifestyle": "https://images.unsplash.com/photo-1542372147193-a7aca54189cd?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzV8MHwxfHNlYXJjaHw0fHxjb2ZmZWUlMjBzaG9wfGVufDB8fHx8MTc4ODMxNTUxN3ww&ixlib=rb-4.1.0&q=85",
+    "smartphone_user": "https://images.unsplash.com/photo-1512428559087-560fa5ceab42?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2NzV8MHwxfHNlYXJjaHwzfHxzbWFydHBob25lJTIwbWVzc2FnaW5nfGVufDB8fHx8MTc4ODMxNTUyMHww&ixlib=rb-4.1.0&q=85"
+  },
+  "testing_and_accessibility": {
+    "data_testid_requirement": "ALL buttons, inputs, filter select, charts, dialog triggers, and data displays MUST have descriptive data-testid (e.g., data-testid='add-transaction-btn', data-testid='filter-category-select', data-testid='telegram-code-display')",
+    "contrast_standard": "APCA & WCAG AA compliant contrast on warm cream (#FAF8F5) background",
+    "micro_interactions": "Framer Motion page transitions, button spring hover, live toast notifications (sonner) when transaction added or deleted"
+  },
+  "instructions_to_main_agent": [
+    "Build a complete JavaScript React application (using .js files) under /app/frontend.",
+    "Include both Landing Marketing Page view and Auth/Dashboard views seamlessly.",
+    "Implement full local storage state management pre-populated with realistic Indonesian financial records (e.g. 'Kopi Susu Gula Aren Rp 18.000', 'Gaji Bulanan Rp 8.500.000', 'Bensin Pertamax Rp 50.000', 'Makan Siang Padang Rp 25.000').",
+    "Ensure the Telegram bot simulator allows typing 'jajan 25k' or uploading a dummy receipt image to immediately append a new item to the dashboard state.",
+    "Add Export CSV logic that downloads an actual .csv file formatted for Indonesian financial accounting.",
+    "Ensure all components are responsive, high-craft, elegant, and warm."
+  ]
+}
